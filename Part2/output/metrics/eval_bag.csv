@@ -1,0 +1,2 @@
+episode,T,n_eval_steps,action_mse,action_mse_std_seeds,nmse,nmse_std_seeds,nmse_head,nmse_head_std_seeds,nmse_arm,nmse_arm_std_seeds,nmse_gripper,nmse_gripper_std_seeds
+0,321,304,0.010482,0.000260,0.020473,0.000075,0.008484,0.000021,0.004336,0.000018,0.175392,0.000838

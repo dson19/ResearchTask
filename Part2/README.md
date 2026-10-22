@@ -1,0 +1,154 @@
+# Part 2 — Vision in Action (ViA): offline inference demo
+
+Open-loop evaluation of the official ViA policy
+([Xiong et al., CoRL 2025](https://vision-in-action.github.io),
+[code](https://github.com/haoyu-x/vision-in-action)) on the released **Bag** data.
+Inference only: there is no robot, so the recorded demonstrations replace the sensors and the
+policy's predicted actions are compared with the human actions.
+
+## Repository layout
+
+```
+Part2/
+├── README.md
+├── NOTES.md                   # verification findings + every deviation from the official code
+├── pipeline.md                # how the pipeline works (Vietnamese)
+├── analysis.md                # earlier write-up of the results (position/rotation errors in cm/deg)
+├── requirements.txt           # packages installed in .venv
+├── ViA.ipynb                  # end-to-end notebook: setup check → data → eval → videos → results
+├── via_tools/
+│   ├── __init__.py            # default paths, 23-d action layout, output folders (out_path)
+│   ├── data.py                # lazy zarr access, cached train stats, episode iterator
+│   ├── model.py               # build nets as in train_via.py, load the checkpoint (strict)
+│   ├── eval_offline.py        # open-loop evaluation: action MSE + normalised MSE
+│   ├── visualize.py           # result videos
+│   └── report.py              # result tables shown in the notebook
+├── output/                    # everything the code writes (see "Outputs")
+└── external/vision-in-action/ # official repo + data + checkpoint (not committed)
+```
+
+## Requirements
+
+- Windows 10/11 with an NVIDIA GPU (≥ 8 GB; tested on an RTX 3060 12 GB). A CUDA toolkit is not
+  needed, because the PyTorch wheels bundle CUDA.
+- Python 3.10 (`py -3.10`) and git.
+- About 15 GB of free disk space for the data.
+- Internet access on the first run, to download DINOv2 through `torch.hub` (cached afterwards).
+
+## 1. Get the code
+
+```powershell
+git clone https://github.com/dson19/ResearchTask.git
+cd ResearchTask\Part2
+git clone https://github.com/haoyu-x/vision-in-action.git external\vision-in-action
+```
+
+## 2. Set up the environment
+
+```powershell
+py -3.10 -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m ipykernel install --user --name via --display-name "Python (via)"
+```
+
+Check the GPU:
+
+```powershell
+.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+## 3. Download the data and the checkpoint
+
+Download 3 files from the official Google Drive folders and put them here:
+
+| file | from | put it in |
+|---|---|---|
+| `bag_train.zarr.zip` (13.6 GB) | [data folder](https://drive.google.com/drive/folders/1qJbXjk8bEvlg3eARPnNTUiw5PcgMhmJy?usp=sharing) | `external/vision-in-action/via_diffusion_policy/dataset/` |
+| `bag_val.zarr.zip` (131 MB) | same folder | `external/vision-in-action/via_diffusion_policy/dataset/` |
+| `via_bag_head_rgb_dinov2_cls_ema_500.pth` (373 MB) | [checkpoint folder](https://drive.google.com/drive/folders/1bMppBPUzdCGkUPAHtgmV9bW6bR0T5Rth?usp=sharing) | `external/vision-in-action/via_diffusion_policy/ckpts/` (create it) |
+
+The train file is needed for the normalisation statistics (the checkpoint does not store them)
+and for the evaluation on the training episodes. The statistics are cached in
+`output/data/stats_bag.npz` (not committed; recomputed once from the train file).
+
+Other locations work too: set `DATA_DIR`, `CKPT_DIR` and `OUT_DIR` in the first notebook cell
+(or pass `--data_dir`, `--ckpt_dir`, `--out_dir` to the scripts).
+
+## 4. Run
+
+**Notebook.** Start Jupyter in `Part2/`, open `ViA.ipynb`, choose the kernel **Python (via)** and
+run all cells:
+
+```powershell
+.venv\Scripts\jupyter lab
+```
+
+The first cell checks the GPU, the versions and the 3 files, and prints where any missing file
+goes. Set `RUN_TRAIN_SPLIT = False` in that cell to skip the 150 training episodes.
+
+**Single steps without Jupyter** (optional, from `Part2/`):
+
+```powershell
+.venv\Scripts\python.exe -m via_tools.data                                      # data inspection + train stats
+.venv\Scripts\python.exe -m via_tools.model                                     # strict checkpoint load
+.venv\Scripts\python.exe -m via_tools.eval_offline --split val                  # eval on the val episode
+.venv\Scripts\python.exe -m via_tools.eval_offline --split train --name bag_train
+.venv\Scripts\python.exe -m via_tools.visualize --name bag                      # val video
+.venv\Scripts\python.exe -m via_tools.visualize --name bag_train                # best/worst train videos
+```
+
+## 5. Outputs
+
+Everything is written to `output/`, sorted by type:
+
+| folder | content | written by |
+|---|---|---|
+| `output/data/` | `.npz` arrays: train-set normalisation stats and per-step predictions (regenerated by the notebook, not committed) | `data.py`, `eval_offline.py` |
+| `output/metrics/` | `eval_bag.csv` (val), `eval_bag_train.csv` (train): the metrics of every episode | `eval_offline.py` |
+| `output/videos/` | `raw_episode.mp4` (input frames), `video_bag_ep0.mp4` (val), `video_bag_train_{best,worst}_ep*.mp4` | `data.py`, `visualize.py` |
+
+The summary tables (mean ± std over seeds, best/worst episodes) are shown in the notebook and
+not written to disk.
+
+Two metrics are computed, per step and per episode: the released code's **action MSE** (raw
+units) and the **normalised action MSE** of this work, over all dimensions and per part (head,
+arm pose, gripper); see "Results". Each result video shows the head-camera image, the recorded
+(solid) and predicted (dashed) 3D trajectories of the head and both end effectors, and the
+running normalised MSE of the head, the arms and the grippers. Best/worst training episodes
+are ranked by the normalised MSE.
+
+Approximate runtime on the RTX 3060 (notebook, fresh kernel), about 3 minutes in total; the first
+run also downloads DINOv2 (84 MB):
+
+| step | runtime |
+|---|---|
+| data inspection | ~3 s |
+| eval, val episode | ~10 s |
+| eval, 150 training episodes | ~65 s |
+| videos (val and train) | ~60 s |
+
+## 6. Results
+
+From the notebook (section 5). The released code logs the action MSE in raw units (metres,
+quaternion components, gripper command), where positions make up only 1% of the error. We also
+report a **normalised action MSE**: the error after mapping every dimension to [-1, 1] with the
+training min/max (the policy's own normalisation), with predicted quaternions sign-aligned to the
+human ones (q and -q are the same rotation). ± is the std over 3 sampling seeds.
+
+| action MSE | val episode (held out) | 150 training episodes |
+|---|---|---|
+| released code, raw units | 0.01048 ± 0.00026 | 1.8e-4 |
+| normalised, all dimensions | 0.02047 ± 0.00008 | 4.0e-5 |
+| normalised, head | 0.00848 ± 0.00002 | 2.7e-5 |
+| normalised, arm pose | 0.00434 ± 0.00002 | 3.2e-5 |
+| normalised, gripper | 0.17539 ± 0.00084 | 1.5e-4 |
+
+- The head and arm poses follow the human closely; the gripper makes up 75% of the normalised MSE
+  on the val episode, i.e. the main deviation is *when* the gripper opens or closes. In this
+  episode the human grasps the object inside the bag three times (two misses); the grasp is
+  occluded from the head camera, and the policy closes the gripper up to 1.7 s early or opens it
+  late at each attempt.
+- The training episodes are reproduced about 500× more closely: the checkpoint has largely
+  memorised its 150 demonstrations.
